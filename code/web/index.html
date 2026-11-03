@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini DFS Dashboard</title>
+  <meta name="description" content="Live dashboard for the Mini Distributed File Storage system: chunk placement, replication, failure detection and self-healing.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='4' width='26' height='7' rx='2.5' fill='%235b8cff'/%3E%3Crect x='3' y='12.5' width='26' height='7' rx='2.5' fill='%2334d399'/%3E%3Crect x='3' y='21' width='26' height='7' rx='2.5' fill='%23f472b6'/%3E%3C/svg%3E">
+  <script>
+    // ?theme=light or ?theme=dark wins (handy on a projector); otherwise the saved choice
+    try {
+      var q = new URLSearchParams(location.search).get('theme');
+      var t = q === 'light' || q === 'dark' ? q : localStorage.getItem('dfs-theme');
+      if (t) document.documentElement.dataset.theme = t;
+    } catch (e) { /* storage blocked (private mode): fall back to the system theme */ }
+  </script>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#live" data-view-link="live">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="brand-text">
+          <span class="brand-name">Mini DFS</span>
+          <span class="brand-sub">Distributed file storage</span>
+        </span>
+      </a>
+      <div class="tabs" role="tablist" aria-label="Sections">
+        <button class="tab active" role="tab" data-view="live" aria-selected="true">Live cluster</button>
+        <button class="tab" role="tab" data-view="results" aria-selected="false">Test results</button>
+        <button class="tab" role="tab" data-view="how" aria-selected="false">How it works</button>
+      </div>
+      <div class="top-actions">
+        <span class="pill pill-lg tone-muted" id="health-pill"><span class="dot"></span><span>Connecting…</span></span>
+        <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch colour theme" title="Switch colour theme"></button>
+      </div>
+    </div>
+  </header>
+
+  <main class="page">
+    <!-- ================================================================ LIVE -->
+    <section class="view" data-view="live" id="view-live">
+      <div class="banner tone-bad" id="banner" hidden></div>
+
+      <div class="kpis" id="kpis">
+        <div class="kpi" data-kpi="nodes"><span class="kpi-label">Storage nodes online</span><span class="kpi-value">–</span><span class="kpi-sub">&nbsp;</span></div>
+        <div class="kpi" data-kpi="files"><span class="kpi-label">Files stored</span><span class="kpi-value">–</span><span class="kpi-sub">&nbsp;</span></div>
+        <div class="kpi" data-kpi="chunks"><span class="kpi-label">Chunks</span><span class="kpi-value">–</span><span class="kpi-sub">&nbsp;</span></div>
+        <div class="kpi" data-kpi="copies"><span class="kpi-label">Live chunk copies</span><span class="kpi-value">–</span><span class="kpi-sub">&nbsp;</span></div>
+        <div class="kpi" data-kpi="under"><span class="kpi-label">Under-replicated</span><span class="kpi-value">–</span><span class="kpi-sub">&nbsp;</span></div>
+        <div class="kpi" data-kpi="disk"><span class="kpi-label">Disk used on nodes</span><span class="kpi-value">–</span><span class="kpi-sub">&nbsp;</span></div>
+      </div>
+
+      <section class="card demo" id="demo">
+        <div class="card-head">
+          <div>
+            <h2><span class="icon" data-icon="shield"></span>Guided fault-tolerance demo</h2>
+            <p class="muted">Five steps that show replication, failure detection and self-healing, live.</p>
+          </div>
+          <div class="head-actions">
+            <button class="btn btn-primary" id="demo-auto" type="button"><span class="icon" data-icon="play"></span><span>Auto-play</span></button>
+            <button class="btn btn-ghost" id="demo-restart" type="button"><span class="icon" data-icon="refresh"></span><span>Restart steps</span></button>
+            <button class="icon-btn" id="demo-collapse" type="button" aria-expanded="true" aria-label="Hide the demo" title="Hide / show"><span class="icon" data-icon="chevron"></span></button>
+          </div>
+        </div>
+        <div class="demo-body" id="demo-body">
+          <ol class="stepper" id="stepper"></ol>
+          <div class="step-detail" id="step-detail"></div>
+        </div>
+      </section>
+
+      <section class="card topo-card">
+        <div class="card-head">
+          <div>
+            <h2><span class="icon" data-icon="network"></span>Cluster topology</h2>
+            <p class="muted">The client, the master and the storage nodes, live. Every square is one 1&nbsp;MB chunk copy, coloured by file.</p>
+          </div>
+          <ul class="legend" aria-label="Legend">
+            <li><span class="lg lg-pulse"></span>heartbeat</li>
+            <li><span class="lg lg-block"></span>chunk copy</li>
+            <li><span class="lg lg-ghost"></span>unreachable copy</li>
+            <li><span class="lg lg-stale"></span>stale copy</li>
+          </ul>
+        </div>
+        <div class="topology" id="topology">
+          <svg class="wires" id="wires" aria-hidden="true"></svg>
+          <div class="topo-top">
+            <article class="actor actor-client" id="actor-client">
+              <div class="actor-head">
+                <span class="actor-icon"><span class="icon" data-icon="laptop"></span></span>
+                <div><div class="actor-name">Client</div><div class="actor-sub mono">dashboard · client.py</div></div>
+              </div>
+              <p class="actor-text">Splits files into 1&nbsp;MB chunks, sends them straight to the nodes and checks every SHA-256 on the way back.</p>
+              <div class="client-status" id="client-status"><span class="dot"></span><span>Idle</span></div>
+            </article>
+            <article class="actor actor-master" id="actor-master">
+              <div class="actor-head">
+                <span class="actor-icon"><span class="icon" data-icon="cpu"></span></span>
+                <div><div class="actor-name">Master</div><div class="actor-sub mono" id="master-url">127.0.0.1:5000</div></div>
+                <span class="pill tone-muted" id="master-pill"><span class="dot"></span><span>…</span></span>
+              </div>
+              <div class="master-stats">
+                <div><span class="ms-value" id="ms-files">–</span><span class="ms-label">files</span></div>
+                <div><span class="ms-value" id="ms-chunks">–</span><span class="ms-label">chunks mapped</span></div>
+                <div><span class="ms-value" id="ms-alive">–</span><span class="ms-label">nodes alive</span></div>
+              </div>
+              <div class="master-last" id="master-last">Keeps the chunk map, watches heartbeats, repairs lost copies.</div>
+            </article>
+            <article class="actor actor-rules">
+              <div class="actor-head">
+                <span class="actor-icon"><span class="icon" data-icon="sliders"></span></span>
+                <div><div class="actor-name">Cluster rules</div><div class="actor-sub mono">config.py</div></div>
+              </div>
+              <dl class="rules">
+                <div><dt>Chunk size</dt><dd data-cfg="chunk_size_mb">1 MB</dd></div>
+                <div><dt>Copies per chunk</dt><dd data-cfg="replication_factor">2</dd></div>
+                <div><dt>Heartbeat</dt><dd>every <span data-cfg="heartbeat_interval">3</span> s</dd></div>
+                <div><dt>Marked dead after</dt><dd><span data-cfg="dead_after">10</span> s silence</dd></div>
+                <div><dt>Repair check</dt><dd>every <span data-cfg="monitor_interval">1</span> s</dd></div>
+              </dl>
+            </article>
+          </div>
+          <div class="topo-nodes" id="nodes"></div>
+        </div>
+      </section>
+
+      <div class="grid-3">
+        <section class="card files-card" id="files-card">
+          <div class="card-head">
+            <div>
+              <h2><span class="icon" data-icon="file"></span>Files</h2>
+              <p class="muted">Upload, download and delete. Click a file to see its chunk map.</p>
+            </div>
+          </div>
+          <label class="dropzone" id="dropzone">
+            <input type="file" id="file-input" class="sr-only" multiple>
+            <span class="dz-icon"><span class="icon" data-icon="upload"></span></span>
+            <span class="dz-title"><strong>Drop files here</strong> or click to choose</span>
+            <span class="dz-sub">Split into 1 MB chunks · 2 copies of each</span>
+          </label>
+          <div class="quick-actions">
+            <button class="btn btn-sm" id="up-sample" type="button"><span class="icon" data-icon="file"></span>Sample CSV · 3 MB</button>
+            <span class="split">
+              <button class="btn btn-sm" id="up-random" type="button"><span class="icon" data-icon="dice"></span>Random file</button>
+              <select id="random-size" aria-label="Random file size">
+                <option value="1">1 MB</option>
+                <option value="5" selected>5 MB</option>
+                <option value="10">10 MB</option>
+                <option value="25">25 MB</option>
+              </select>
+            </span>
+          </div>
+          <ul class="file-list" id="file-list"></ul>
+          <div class="op-result" id="op-result" hidden></div>
+          <div class="danger-zone">
+            <button class="btn btn-sm btn-ghost tone-bad-text" id="reset-cluster" type="button"><span class="icon" data-icon="refresh"></span>Reset cluster (delete all data)</button>
+          </div>
+        </section>
+
+        <section class="card map-card" id="map-card">
+          <div class="card-head">
+            <div>
+              <h2><span class="icon" data-icon="grid"></span>Chunk map</h2>
+              <p class="muted">Which nodes hold each chunk, as the master records it.</p>
+            </div>
+            <select id="map-file" class="select" aria-label="File to show"></select>
+          </div>
+          <div class="map-summary" id="map-summary"></div>
+          <div class="table-wrap"><table class="chunk-map" id="chunk-map"></table></div>
+          <p class="empty" id="map-empty">Upload a file to see how its chunks are spread.</p>
+        </section>
+
+        <section class="card events-card" id="events-card">
+          <div class="card-head">
+            <div>
+              <h2><span class="icon" data-icon="activity"></span>Event log</h2>
+              <p class="muted">Straight from the master: joins, failures, repairs.</p>
+            </div>
+            <button class="btn btn-sm btn-ghost" id="events-clear" type="button">Clear</button>
+          </div>
+          <ol class="events" id="events"></ol>
+          <p class="empty" id="events-empty">Waiting for events…</p>
+        </section>
+      </div>
+    </section>
+
+    <!-- ============================================================= RESULTS -->
+    <section class="view" data-view="results" id="view-results" hidden>
+      <div class="page-head">
+        <div>
+          <h1>Test results</h1>
+          <p class="muted" id="results-meta">Loading…</p>
+        </div>
+        <p class="hint">Re-run with <code>uv run run_tests.py</code>. Stop the dashboard first: the tests use the same ports.</p>
+      </div>
+      <div id="results-body">
+        <div class="kpis kpis-4" id="results-kpis"></div>
+        <section class="card">
+          <div class="card-head"><div><h2>Roadmap tests T1–T6 + extra rejoin check</h2><p class="muted">Each test starts from a real cluster of separate processes and crashes nodes with SIGKILL.</p></div></div>
+          <div class="table-wrap tall"><table class="table tests-table" id="tests-table"></table></div>
+        </section>
+        <div class="charts" id="charts"></div>
+        <section class="card">
+          <div class="card-head"><div><h2>Upload and download time</h2><p class="muted">Median of 5 runs per file size, every chunk written to 2 nodes.</p></div></div>
+          <div class="perf" id="perf"></div>
+        </section>
+      </div>
+    </section>
+
+    <!-- ========================================================= HOW IT WORKS -->
+    <section class="view" data-view="how" id="view-how" hidden>
+      <div class="how-hero">
+        <h1>How Mini DFS works</h1>
+        <p class="lead">A small file storage system modelled on HDFS. It splits files into 1&nbsp;MB chunks, keeps two copies of every chunk on different storage nodes, and still returns the complete, unchanged file when a node fails. When a node stays down, the master copies its chunks to a healthy node so every chunk has two copies again.</p>
+      </div>
+
+      <div class="roles">
+        <article class="card role">
+          <span class="role-icon"><span class="icon" data-icon="laptop"></span></span>
+          <h3>Client <code>client.py</code></h3>
+          <ul>
+            <li>Splits a file into 1&nbsp;MB chunks and computes a SHA-256 per chunk and for the whole file.</li>
+            <li>Asks the master <em>where</em> chunks go, then sends the bytes <em>directly</em> to the storage nodes.</li>
+            <li>On download, tries the next copy when a node is down or a chunk is damaged.</li>
+          </ul>
+        </article>
+        <article class="card role">
+          <span class="role-icon"><span class="icon" data-icon="cpu"></span></span>
+          <h3>Master <code>master.py</code> · :5000</h3>
+          <ul>
+            <li>Never stores file data, only metadata: files, chunks, and which nodes hold each chunk (<code>metadata.json</code>).</li>
+            <li>Places chunks on the least-loaded live nodes.</li>
+            <li>Watches heartbeats, marks silent nodes dead and repairs lost copies.</li>
+          </ul>
+        </article>
+        <article class="card role">
+          <span class="role-icon"><span class="icon" data-icon="server"></span></span>
+          <h3>Storage nodes <code>storage_node.py</code> · :5001–5003</h3>
+          <ul>
+            <li>Save, return, list and delete chunks in their own folder, <code>storage/node_&lt;port&gt;/</code>.</li>
+            <li>Send a heartbeat to the master every 3&nbsp;s.</li>
+            <li>Copy a chunk straight to another node when the master asks (re-replication).</li>
+          </ul>
+        </article>
+      </div>
+
+      <h2 class="section-title">The five flows</h2>
+      <div class="flows">
+        <article class="card flow">
+          <span class="flow-num">1</span>
+          <h3>Upload</h3>
+          <ol>
+            <li>Client → master <code>POST /allocate</code>: “I have 3 chunks, where do they go?”</li>
+            <li>Master picks the 2 least-loaded live nodes per chunk.</li>
+            <li>Client → nodes <code>PUT /chunks/&lt;id&gt;</code> with the chunk’s SHA-256; a node rejects a chunk whose checksum does not match.</li>
+            <li>Client → master <code>POST /commit</code> with where each chunk landed.</li>
+          </ol>
+        </article>
+        <article class="card flow">
+          <span class="flow-num">2</span>
+          <h3>Download</h3>
+          <ol>
+            <li>Client → master <code>GET /files/&lt;name&gt;</code> for the chunk map and live copies.</li>
+            <li>For each chunk: read from the first live copy <code>GET /chunks/&lt;id&gt;</code>, verify its SHA-256.</li>
+            <li>Node down or bad checksum → try the other copy.</li>
+            <li>Verify the whole file’s SHA-256 before saving it.</li>
+          </ol>
+        </article>
+        <article class="card flow">
+          <span class="flow-num">3</span>
+          <h3>Failure detection</h3>
+          <ol>
+            <li>Every node sends <code>POST /heartbeat</code> every <b>3&nbsp;s</b>.</li>
+            <li>The master’s monitor runs every second.</li>
+            <li>A node silent for more than <b>10&nbsp;s</b> is marked <b>dead</b>.</li>
+            <li>Reads keep working during those 10&nbsp;s because the client falls back to the second copy.</li>
+          </ol>
+        </article>
+        <article class="card flow">
+          <span class="flow-num">4</span>
+          <h3>Self-healing</h3>
+          <ol>
+            <li>The master finds every chunk with fewer than 2 live copies.</li>
+            <li>It picks a healthy, least-loaded node that does not hold the chunk yet.</li>
+            <li>It tells a surviving holder <code>POST /replicate</code>: the chunk goes node → node, never through the master.</li>
+            <li>The chunk map is updated and saved.</li>
+          </ol>
+        </article>
+        <article class="card flow">
+          <span class="flow-num">5</span>
+          <h3>Rejoin</h3>
+          <ol>
+            <li>A restarted node sends its first heartbeat; the master marks it alive again.</li>
+            <li>The master asks it for its chunk list <code>GET /chunks</code>.</li>
+            <li>Copies that were re-created elsewhere while it was away are stale and get deleted.</li>
+          </ol>
+        </article>
+        <article class="card flow flow-accent">
+          <span class="flow-num"><span class="icon" data-icon="shield"></span></span>
+          <h3>Why no data is lost</h3>
+          <p>Every chunk lives on 2 different nodes, so any single node can fail at any moment. Checksums catch damaged chunks on both upload and download, and writes go to a temporary file first, so a half-written chunk is never visible.</p>
+        </article>
+      </div>
+
+      <div class="two-col">
+        <section class="card">
+          <h2>Master API <span class="muted small mono">:5000</span></h2>
+          <table class="table api">
+            <thead><tr><th scope="col">Method</th><th scope="col">Path</th><th scope="col">Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><span class="verb post">POST</span></td><td class="mono">/allocate</td><td>Choose 2 nodes for each chunk of a new file</td></tr>
+              <tr><td><span class="verb post">POST</span></td><td class="mono">/commit</td><td>Record a file once its chunks are stored</td></tr>
+              <tr><td><span class="verb get">GET</span></td><td class="mono">/files</td><td>All files with their health</td></tr>
+              <tr><td><span class="verb get">GET</span></td><td class="mono">/files/&lt;name&gt;</td><td>Chunk map of one file, with live copies</td></tr>
+              <tr><td><span class="verb del">DELETE</span></td><td class="mono">/files/&lt;name&gt;</td><td>Delete a file and its chunks</td></tr>
+              <tr><td><span class="verb get">GET</span></td><td class="mono">/nodes</td><td>Node health, last heartbeat, load</td></tr>
+              <tr><td><span class="verb post">POST</span></td><td class="mono">/heartbeat</td><td>Sent by every node every 3 s</td></tr>
+              <tr><td><span class="verb get">GET</span></td><td class="mono">/events</td><td>Recent cluster events</td></tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="card">
+          <h2>Storage node API <span class="muted small mono">:5001–5003</span></h2>
+          <table class="table api">
+            <thead><tr><th scope="col">Method</th><th scope="col">Path</th><th scope="col">Purpose</th></tr></thead>
+            <tbody>
+              <tr><td><span class="verb put">PUT</span></td><td class="mono">/chunks/&lt;id&gt;</td><td>Store a chunk (checksum checked)</td></tr>
+              <tr><td><span class="verb get">GET</span></td><td class="mono">/chunks/&lt;id&gt;</td><td>Return a chunk’s bytes</td></tr>
+              <tr><td><span class="verb del">DELETE</span></td><td class="mono">/chunks/&lt;id&gt;</td><td>Delete a chunk</td></tr>
+              <tr><td><span class="verb get">GET</span></td><td class="mono">/chunks</td><td>List the chunks on this node</td></tr>
+              <tr><td><span class="verb post">POST</span></td><td class="mono">/replicate</td><td>Copy a chunk straight to another node</td></tr>
+              <tr><td><span class="verb get">GET</span></td><td class="mono">/health</td><td>Status, chunk count, disk use, uptime</td></tr>
+            </tbody>
+          </table>
+        </section>
+      </div>
+
+      <div class="two-col">
+        <section class="card">
+          <h2>Run it yourself</h2>
+          <pre class="code"><span class="c"># once</span>
+cd code
+uv sync
+
+<span class="c"># this dashboard + master + 3 nodes</span>
+uv run dashboard.py --fresh
+
+<span class="c"># or the command-line way</span>
+uv run cluster.py --fresh
+uv run client.py upload samples/reviews.csv
+uv run client.py map reviews.csv
+uv run client.py download reviews.csv
+
+<span class="c"># automated tests T1–T6 and charts</span>
+uv run run_tests.py</pre>
+        </section>
+        <section class="card">
+          <h2>Known limitations</h2>
+          <ul class="limits">
+            <li><b>Single master.</b> The master is a single point of failure; real HDFS adds a standby master.</li>
+            <li><b>One machine.</b> All nodes run on one laptop, so real network delays are not tested.</li>
+            <li><b>Write once.</b> Files cannot be edited after upload, only replaced (as in HDFS).</li>
+            <li><b>Fixed cluster.</b> Three storage nodes on fixed ports; adding nodes means editing <code>config.py</code>.</li>
+          </ul>
+        </section>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Mini Distributed File Storage · Distributed Systems project</span>
+    <span class="mono" id="footer-status"></span>
+  </footer>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <dialog class="dialog" id="confirm">
+    <form method="dialog">
+      <h3 id="confirm-title">Are you sure?</h3>
+      <p id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" value="cancel">Cancel</button>
+        <button class="btn btn-danger" value="ok" id="confirm-ok">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog lightbox" id="lightbox">
+    <form method="dialog">
+      <img id="lightbox-img" alt="">
+      <button class="icon-btn lightbox-close" value="close" aria-label="Close"><span class="icon" data-icon="x"></span></button>
+    </form>
+  </dialog>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

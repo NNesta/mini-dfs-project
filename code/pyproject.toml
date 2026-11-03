@@ -1,0 +1,11 @@
+[project]
+name = "mini-dfs"
+version = "0.1.0"
+description = "Mini Distributed File Storage: an HDFS-style chunked, replicated, self-healing file store in Python and Flask"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "flask>=3.0",
+    "matplotlib>=3.8",
+    "requests>=2.31",
+]

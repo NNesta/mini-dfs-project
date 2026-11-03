@@ -1,0 +1,143 @@
+{
+  "generated": "2026-10-28 11:34",
+  "environment": "Python 3.13.18 on Linux",
+  "tests": [
+    {
+      "id": "T1",
+      "name": "Upload a 5 MB file",
+      "expected": "5 chunks, each stored on 2 different nodes",
+      "observed": "5 chunks, 10 copies on 2 different nodes each; copies per node 5001: 4, 5002: 3, 5003: 3; upload took 0.10 s",
+      "passed": true,
+      "seconds": 0.09953623399997014,
+      "placement": {
+        "test_5mb.bin_0": [
+          5001,
+          5002
+        ],
+        "test_5mb.bin_1": [
+          5003,
+          5001
+        ],
+        "test_5mb.bin_2": [
+          5002,
+          5003
+        ],
+        "test_5mb.bin_3": [
+          5001,
+          5002
+        ],
+        "test_5mb.bin_4": [
+          5003,
+          5001
+        ]
+      }
+    },
+    {
+      "id": "T2",
+      "name": "Download with all nodes running",
+      "expected": "SHA-256 checksum matches the original",
+      "observed": "SHA-256 matches the original (9fb8166b41a9...); download took 0.04 s",
+      "passed": true,
+      "seconds": 0.035526098999980604
+    },
+    {
+      "id": "T3",
+      "name": "Stop one storage node, then download",
+      "expected": "File downloads complete; checksum matches",
+      "observed": "node 5002 stopped; file complete in 0.05 s, 1 of 5 chunks read from their second copy; checksum matches",
+      "passed": true,
+      "seconds": 0.046735685000044214,
+      "backup_chunks": [
+        "test_5mb.bin_2"
+      ]
+    },
+    {
+      "id": "T4",
+      "name": "Keep the node stopped for 10+ seconds",
+      "expected": "Master marks it dead and copies its chunks to a healthy node",
+      "observed": "marked dead after 10.4 s without a heartbeat (10.0 s after it stopped); 3 lost copies re-created on healthy nodes 0.04 s later; every chunk back to 2 live copies",
+      "passed": true,
+      "detect_seconds": 9.961458921432495,
+      "repair_seconds": 10.000893354415894,
+      "silent_seconds": 10.4
+    },
+    {
+      "id": "T5",
+      "name": "Stop a second node after re-replication",
+      "expected": "File still downloads correctly",
+      "observed": "nodes 5002 and 5003 both down; all 5 chunks read from node 5001; checksum matches",
+      "passed": true,
+      "seconds": 0.04401499599998715
+    },
+    {
+      "id": "E1",
+      "name": "Restart both stopped nodes (extra)",
+      "expected": "Nodes rejoin, 2 live copies again, stale copies removed",
+      "observed": "both nodes rejoined; every chunk has 2 live copies; 3 stale copies deleted from node 5002; checksum still matches",
+      "passed": true
+    },
+    {
+      "id": "T6",
+      "name": "Upload 10 files of different sizes",
+      "expected": "Chunks spread roughly evenly across the 3 nodes",
+      "observed": "10 files (0.3-10 MB), 45 chunks, 90 copies: node 5001: 30, node 5002: 30, node 5003: 30; all 10 files download with matching checksums",
+      "passed": true
+    }
+  ],
+  "performance": [
+    {
+      "size_mb": 1,
+      "upload_s": 0.014,
+      "download_s": 0.008
+    },
+    {
+      "size_mb": 5,
+      "upload_s": 0.068,
+      "download_s": 0.046
+    },
+    {
+      "size_mb": 10,
+      "upload_s": 0.135,
+      "download_s": 0.077
+    },
+    {
+      "size_mb": 25,
+      "upload_s": 0.321,
+      "download_s": 0.374
+    },
+    {
+      "size_mb": 50,
+      "upload_s": 0.57,
+      "download_s": 0.622
+    }
+  ],
+  "timeline": {
+    "last_heartbeat": -0.44,
+    "node_stopped": 0.0,
+    "download_ok": 0.05,
+    "marked_dead": 9.96,
+    "re_replicated": 10.0,
+    "copies_made": 3
+  },
+  "distribution": {
+    "files": 10,
+    "chunks": 45,
+    "per_node": {
+      "5001": 30,
+      "5002": 30,
+      "5003": 30
+    },
+    "file_sizes_mb": [
+      0.3,
+      0.8,
+      1.5,
+      2.2,
+      3.0,
+      4.5,
+      5.0,
+      6.7,
+      8.0,
+      10.0
+    ]
+  }
+}

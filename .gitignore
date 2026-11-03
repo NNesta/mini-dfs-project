@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments (uv creates code/.venv)
+.venv/
+venv/
+
+# Runtime data created when the cluster or the tests run
+storage/
+metadata.json
+metadata.json.tmp
+downloads/
+test_run/
+*.part
+
+# OS and editor files
+.DS_Store
+.idea/
+.vscode/
+~$*

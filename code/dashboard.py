@@ -12,6 +12,10 @@ client and the storage nodes. On top of that it can crash and restart storage
 nodes (it runs them as child processes, like cluster.py does) and it shows the
 master's chunk map, node heartbeats and cluster events live in the browser.
 
+Anyone can watch the cluster, upload and download. Everything that can lose data
+needs the admin sign-in (see admin.py): crashing or restarting a node, deleting or
+replacing a file, and resetting the cluster.
+
 If a master is already running (for example from cluster.py), the dashboard
 attaches to it instead of starting a second cluster. In that mode the crash
 button only works for nodes the dashboard itself restarted.
@@ -34,7 +38,9 @@ import requests
 from flask import Flask, abort, jsonify, request, send_from_directory
 from werkzeug.exceptions import HTTPException
 
+import admin
 import config
+from admin import admin_required
 from client import Client, DFSError, safe_name
 from cluster import HERE, Cluster, responds
 
@@ -57,6 +63,7 @@ SETTINGS = {
 
 app = Flask(__name__, static_folder=None)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 2**20       # browser uploads up to 512 MB
+admin.init_app(app)
 client = Client()
 cluster = Cluster(data_dir=STORAGE, metadata=METADATA)
 control = threading.Lock()                            # one start / crash / reset at a time
@@ -90,6 +97,18 @@ def check_name(name):
 def check_port(port):
     if port not in config.NODE_PORTS:
         abort(404, description=f"no storage node on port {port}")
+
+
+def check_can_store(name):
+    """Anyone can add a file, but replacing one destroys the old file, like a delete."""
+    if not admin.signed_in() and fetch(f"{config.MASTER_URL}/files/{quote(name)}"):
+        abort(409, description=f"{name} is already stored; only the admin can replace it")
+
+
+def store(path, name=None):
+    result = client.upload(path, name)
+    admin.record("uploaded a file", f"{result['name']}, {result['size'] / 2**20:.2f} MB")
+    return jsonify(result)
 
 
 def wipe():
@@ -147,7 +166,8 @@ def state():
 
     return jsonify(time=time.time(), managed=MODE["managed"],
                    master={"up": up, "url": master, "managed": "master" in running},
-                   nodes=nodes, files=files, events=events, config=SETTINGS)
+                   nodes=nodes, files=files, events=events, config=SETTINGS,
+                   admin=admin.status())
 
 
 @app.get("/api/results")
@@ -166,15 +186,16 @@ def upload():
     if item is None or not item.filename:
         abort(400, description="choose a file to upload")
     name = safe_name(Path(item.filename).name)
+    check_can_store(name)
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / name
         item.save(path)
-        return jsonify(client.upload(path, name))
+        return store(path, name)
 
 
 @app.post("/api/upload/sample")
 def upload_sample():
-    return jsonify(client.upload(SAMPLE))
+    return store(SAMPLE)
 
 
 @app.post("/api/upload/random")
@@ -185,7 +206,7 @@ def upload_random():
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / name
         path.write_bytes(os.urandom(int(size_mb * 2**20)))
-        return jsonify(client.upload(path, name))
+        return store(path, name)
 
 
 @app.post("/api/files/<name>/download")
@@ -204,14 +225,18 @@ def saved_download(name):
 
 
 @app.delete("/api/files/<name>")
+@admin_required
 def delete(name):
     check_name(name)
-    return jsonify(client.delete(name))
+    result = client.delete(name)
+    admin.record("deleted a file", name)
+    return jsonify(result)
 
 
 # ------------------------------------------------------------ node control
 
 @app.post("/api/nodes/<int:port>/crash")
+@admin_required
 def crash_node(port):
     """Kill a storage node without warning, as a power cut would."""
     check_port(port)
@@ -221,10 +246,12 @@ def crash_node(port):
                                    f"stop it in its own terminal with Ctrl+C")
         cluster.stop_node(port)
     print(f"[dashboard] node {port} crashed (process killed)", flush=True)
+    admin.record("crashed a node", str(port))
     return jsonify(crashed=port)
 
 
 @app.post("/api/nodes/<int:port>/start")
+@admin_required
 def start_node(port):
     check_port(port)
     with control:
@@ -235,10 +262,12 @@ def start_node(port):
         except RuntimeError as exc:
             abort(500, description=str(exc))
     print(f"[dashboard] node {port} started", flush=True)
+    admin.record("restarted a node", str(port))
     return jsonify(started=port)
 
 
 @app.post("/api/reset")
+@admin_required
 def reset():
     """Stop everything, delete all chunks and metadata, start a fresh cluster."""
     if not MODE["managed"]:
@@ -250,6 +279,7 @@ def reset():
         shutil.rmtree(DOWNLOADS, ignore_errors=True)
         cluster.start_all()
     print("[dashboard] cluster reset: all data deleted, fresh master and nodes", flush=True)
+    admin.record("reset the cluster", "all files and chunks deleted")
     return jsonify(reset=True)
 
 

@@ -205,7 +205,6 @@ h2 .icon { width: 18px; height: 18px; color: var(--accent); }
 .btn-outline-bad:hover { background: var(--bad-soft); }
 .btn-outline-ok { border-color: color-mix(in srgb, var(--ok) 45%, transparent); color: var(--ok); background: transparent; }
 .btn-outline-ok:hover { background: var(--ok-soft); }
-.tone-bad-text { color: var(--bad); }
 
 .icon-btn {
   appearance: none; width: 36px; height: 36px; display: inline-grid; place-items: center;
@@ -496,7 +495,21 @@ select, .select {
 .chip { font: 650 11px var(--mono); padding: 3px 7px; border-radius: 6px; background: var(--surface-3); color: var(--text-2); }
 .op-actions { margin-top: 10px; display: flex; gap: 8px; }
 
-.danger-zone { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); display: flex; justify-content: flex-end; }
+/* ------------------------------------------------------------------ admin */
+
+.admin-panel { display: flex; flex-direction: column; gap: var(--gap); }
+.admin-locked { width: 100%; max-width: 620px; margin: 8px auto 0; display: flex; flex-direction: column; align-items: center; gap: 12px; text-align: center; }
+.admin-locked .access { width: 100%; text-align: left; font-size: 13px; }
+.admin-panel h2 + .muted { margin-top: 4px; font-size: 13px; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.field input { width: 100%; padding: 10px 12px; font: 400 14px var(--font); color: var(--text); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.form-error { margin-top: 10px; font-size: 13px; color: var(--bad) !important; }
+.form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.cell-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.cell-name { font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.nowrap { white-space: nowrap; }
+.verify-file { display: grid; gap: 4px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12px; }
 
 /* chunk map */
 .map-summary { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 12px; }
@@ -638,6 +651,8 @@ select, .select {
   .topbar-inner { flex-wrap: wrap; gap: 12px; padding: 10px 16px; }
   .tabs { order: 3; width: 100%; overflow-x: auto; }
   .tab { flex: 1; white-space: nowrap; }
+  .form-actions { justify-content: stretch; }
+  .form-actions .btn { width: 100%; justify-content: center; }
   .page { padding: 16px 16px 32px; }
   .footer { padding: 8px 16px 28px; }
   .card { padding: 16px; }

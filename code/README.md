@@ -100,9 +100,10 @@ restart nodes from the browser.
 
 | Page | What it shows |
 |---|---|
-| **Live cluster** | Health summary; the **guided fault-tolerance demo** (upload, crash a node, read during the failure, watch the master detect it and re-replicate, restart the node); a live topology with animated heartbeats and chunk transfers; each node's heartbeat timer against the 10 s limit and the chunks on its disk; file upload (drag and drop, sample CSV, random file), download with checksum report, delete; the chunk map; the master's event log |
+| **Live cluster** | Health summary; the **guided fault-tolerance demo** (upload, crash a node, read during the failure, watch the master detect it and re-replicate, restart the node); a live topology with animated heartbeats and chunk transfers; each node's heartbeat timer against the 10 s limit and the chunks on its disk; file upload (drag and drop, sample CSV, random file), download with checksum report; the chunk map; the master's event log |
 | **Test results** | `results/results.json` from `run_tests.py`: the T1-T6 + E1 table, key timings, the three charts and a transfer-time comparison |
 | **How it works** | The three roles, the five flows (upload, download, failure detection, self-healing, rejoin), both HTTP APIs and the known limitations |
+| **Admin** | After sign-in: cluster control, file management, the chunks on each node, the integrity check, the activity log, password change and cluster reset. See [Admin sign-in](#admin-sign-in) |
 
 Add `?theme=light` or `?theme=dark` to the URL to force a theme, for example on
 a projector. If a master is already running (say from `cluster.py`), the dashboard
@@ -112,16 +113,64 @@ running `run_tests.py`, because both use ports 5000-5003.
 
 Dashboard API (used by the page, handy for scripting):
 
-| Method | Path | Purpose |
+| Method | Path | Purpose | Needs admin |
+|---|---|---|---|
+| GET | `/api/state?since=<t>` | Master view, node health, chunks on each node's disk, files with chunk maps, new events, sign-in state | No |
+| POST | `/api/upload` | Upload a file (multipart field `file`) | To replace a file |
+| POST | `/api/upload/sample`, `/api/upload/random` | Upload `samples/reviews.csv`, or a random file of `{"size_mb": n}` | No |
+| POST | `/api/files/<name>/download` | Rebuild and verify a file into `downloads/`, return the per-chunk report | No |
+| DELETE | `/api/files/<name>` | Delete a file and its chunks | Yes |
+| POST | `/api/nodes/<port>/crash`, `/api/nodes/<port>/start` | Kill or restart a storage node | Yes |
+| POST | `/api/reset` | Stop everything, delete all data, start a fresh cluster | Yes |
+| GET | `/api/results` | Saved test results | No |
+| POST | `/api/admin/setup`, `/api/admin/login`, `/api/admin/logout` | Set the first password (`{"password": ...}`), sign in, sign out | No |
+| POST | `/api/admin/password` | Change the password (`{"current": ..., "new": ...}`) | Yes |
+| POST | `/api/admin/verify` | Integrity check: read every copy of every chunk | Yes |
+| GET | `/api/admin/activity` | The latest 200 activity log entries | Yes |
+
+## Admin sign-in
+
+The dashboard has one admin and one password. User accounts are out of scope for
+this project, so nobody registers and files have no owners. The first time you
+open the dashboard, click **Admin sign-in** and choose the password. Whoever does
+this first becomes the admin.
+
+| Action | Anyone | Admin |
 |---|---|---|
-| GET | `/api/state?since=<t>` | Master view, node health, chunks on each node's disk, files with chunk maps, new events |
-| POST | `/api/upload` | Upload a file (multipart field `file`) |
-| POST | `/api/upload/sample`, `/api/upload/random` | Upload `samples/reviews.csv`, or a random file of `{"size_mb": n}` |
-| POST | `/api/files/<name>/download` | Rebuild and verify a file into `downloads/`, return the per-chunk report |
-| DELETE | `/api/files/<name>` | Delete a file and its chunks |
-| POST | `/api/nodes/<port>/crash`, `/api/nodes/<port>/start` | Kill or restart a storage node |
-| POST | `/api/reset` | Stop everything, delete all data, start a fresh cluster |
-| GET | `/api/results` | Saved test results |
+| Watch the cluster, read test results | Yes | Yes |
+| Upload a new file, download any file | Yes | Yes |
+| Replace or delete a file | No | Yes |
+| Crash or restart a storage node | No | Yes |
+| Inspect chunks, run the integrity check, read the activity log | No | Yes |
+| Reset the cluster | No | Yes |
+
+Downloads stay open on purpose, so a visitor can still prove test T3 while a node
+is down. The **Admin** tab adds:
+
+- **Cluster control:** every process with its status, last heartbeat and disk use,
+  and the crash and restart buttons.
+- **Files:** every stored file, with download and delete.
+- **Chunks on a node:** what each node holds, including stale copies. It is
+  read-only on purpose. The master tracks which nodes are alive, not which copies
+  each node holds, so deleting a copy by hand would leave a chunk short of copies
+  without anyone noticing.
+- **Integrity check:** reads every copy of every chunk and compares it with the
+  SHA-256 the master recorded, like `hdfs fsck`. A normal download stops at the
+  first good copy, so only this finds a damaged second copy. It reports problems
+  but does not repair them.
+- **Activity log:** who did what on the dashboard, including failed sign-ins. It
+  survives restarts, `--fresh` and a cluster reset.
+
+The password is stored only as a PBKDF2-SHA256 hash in `admin.json`, and activity
+goes to `admin_activity.jsonl`. Git ignores both. To reset a forgotten password,
+stop the dashboard and delete `admin.json`. Run the admin checks with:
+
+```bash
+uv run test_admin.py     # a few seconds, uses its own cluster and password file
+```
+
+Like `run_tests.py` it needs ports 5000-5003, so stop any running cluster first.
+It does not touch `results/`.
 
 ## Tests and charts
 
@@ -149,6 +198,7 @@ about 40 seconds, mostly waiting for the 10-second failure detection.
 **With the dashboard:** run `uv run dashboard.py --fresh`, open
 <http://127.0.0.1:8080>, and either press **Auto-play** in the guided demo or click
 through its five steps while explaining each one. The steps match the script below.
+Crashing and restarting a node need the admin password, so sign in before you start.
 
 **From the terminal:**
 
@@ -191,8 +241,10 @@ through its five steps while explaining each one. The steps match the script bel
 | `client.py` | Command-line client: upload, download, map, nodes, list, delete, events |
 | `cluster.py` | Starts the master and 3 nodes from one terminal; stop/start nodes for demos |
 | `dashboard.py` | Web dashboard server: starts the cluster, serves `web/`, exposes `/api/*` |
+| `admin.py` | Dashboard admin sign-in, activity log and integrity check |
 | `web/` | Dashboard front end (`index.html`, `style.css`, `app.js`); plain HTML/CSS/JS, no build step |
 | `run_tests.py` | Automated tests T1-T6 + E1 and timing measurements |
+| `test_admin.py` | Automated checks for the admin sign-in and what it protects |
 | `charts.py` | Draws the result charts with matplotlib |
 | `samples/reviews.csv` | 3 MB sample file for the demo |
 
@@ -201,3 +253,5 @@ through its five steps while explaining each one. The steps match the script bel
 - The master is a single point of failure; real HDFS adds a standby master.
 - All nodes run on one laptop, so real network delays are not tested.
 - Files cannot be edited after upload, only replaced (as in HDFS).
+- The admin sign-in guards the dashboard only. The master and node APIs stay open,
+  so `client.py` needs no password and anyone on this laptop can still call them.

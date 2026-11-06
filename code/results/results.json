@@ -1,14 +1,14 @@
 {
-  "generated": "2026-10-28 11:34",
-  "environment": "Python 3.13.18 on Linux",
+  "generated": "2026-11-06 23:49",
+  "environment": "Python 3.13.11 on Darwin",
   "tests": [
     {
       "id": "T1",
       "name": "Upload a 5 MB file",
       "expected": "5 chunks, each stored on 2 different nodes",
-      "observed": "5 chunks, 10 copies on 2 different nodes each; copies per node 5001: 4, 5002: 3, 5003: 3; upload took 0.10 s",
+      "observed": "5 chunks, 10 copies on 2 different nodes each; copies per node 5001: 4, 5002: 3, 5003: 3; upload took 0.03 s",
       "passed": true,
-      "seconds": 0.09953623399997014,
+      "seconds": 0.02944383399972139,
       "placement": {
         "test_5mb.bin_0": [
           5001,
@@ -36,17 +36,17 @@
       "id": "T2",
       "name": "Download with all nodes running",
       "expected": "SHA-256 checksum matches the original",
-      "observed": "SHA-256 matches the original (9fb8166b41a9...); download took 0.04 s",
+      "observed": "SHA-256 matches the original (9fb8166b41a9...); download took 0.01 s",
       "passed": true,
-      "seconds": 0.035526098999980604
+      "seconds": 0.011710624999977881
     },
     {
       "id": "T3",
       "name": "Stop one storage node, then download",
       "expected": "File downloads complete; checksum matches",
-      "observed": "node 5002 stopped; file complete in 0.05 s, 1 of 5 chunks read from their second copy; checksum matches",
+      "observed": "node 5002 stopped; file complete in 0.01 s, 1 of 5 chunks read from their second copy; checksum matches",
       "passed": true,
-      "seconds": 0.046735685000044214,
+      "seconds": 0.011037375000341854,
       "backup_chunks": [
         "test_5mb.bin_2"
       ]
@@ -55,11 +55,11 @@
       "id": "T4",
       "name": "Keep the node stopped for 10+ seconds",
       "expected": "Master marks it dead and copies its chunks to a healthy node",
-      "observed": "marked dead after 10.4 s without a heartbeat (10.0 s after it stopped); 3 lost copies re-created on healthy nodes 0.04 s later; every chunk back to 2 live copies",
+      "observed": "marked dead after 10.6 s without a heartbeat (10.2 s after it stopped); 3 lost copies re-created on healthy nodes 0.03 s later; every chunk back to 2 live copies",
       "passed": true,
-      "detect_seconds": 9.961458921432495,
-      "repair_seconds": 10.000893354415894,
-      "silent_seconds": 10.4
+      "detect_seconds": 10.201225996017456,
+      "repair_seconds": 10.23366403579712,
+      "silent_seconds": 10.61
     },
     {
       "id": "T5",
@@ -67,7 +67,7 @@
       "expected": "File still downloads correctly",
       "observed": "nodes 5002 and 5003 both down; all 5 chunks read from node 5001; checksum matches",
       "passed": true,
-      "seconds": 0.04401499599998715
+      "seconds": 0.021391791000496596
     },
     {
       "id": "E1",
@@ -87,36 +87,36 @@
   "performance": [
     {
       "size_mb": 1,
-      "upload_s": 0.014,
-      "download_s": 0.008
+      "upload_s": 0.005,
+      "download_s": 0.003
     },
     {
       "size_mb": 5,
-      "upload_s": 0.068,
-      "download_s": 0.046
+      "upload_s": 0.021,
+      "download_s": 0.011
     },
     {
       "size_mb": 10,
-      "upload_s": 0.135,
-      "download_s": 0.077
+      "upload_s": 0.042,
+      "download_s": 0.026
     },
     {
       "size_mb": 25,
-      "upload_s": 0.321,
-      "download_s": 0.374
+      "upload_s": 0.094,
+      "download_s": 0.054
     },
     {
       "size_mb": 50,
-      "upload_s": 0.57,
-      "download_s": 0.622
+      "upload_s": 0.18,
+      "download_s": 0.111
     }
   ],
   "timeline": {
-    "last_heartbeat": -0.44,
+    "last_heartbeat": -0.41,
     "node_stopped": 0.0,
-    "download_ok": 0.05,
-    "marked_dead": 9.96,
-    "re_replicated": 10.0,
+    "download_ok": 0.01,
+    "marked_dead": 10.2,
+    "re_replicated": 10.23,
     "copies_made": 3
   },
   "distribution": {

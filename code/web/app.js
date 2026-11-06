@@ -53,6 +53,8 @@ const ICONS = {
   alert: '<path d="M12 3 2 20h20z"/><path d="M12 10v4M12 17h.01"/>',
   heart: '<path d="M3 12h4l2-5 4 10 2-5h6"/>',
   save: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
+  lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
+  logout: '<path d="M10 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h4"/><path d="m15 16 4-4-4-4"/><path d="M19 12H9"/>',
 };
 
 function svgIcon(name) {
@@ -103,6 +105,8 @@ const S = {
   pollAgain: false,
   resultsLoaded: false,
   busy: 0,
+  admin: { configured: true, signed_in: false },
+  activityAt: 0,            // when the activity log was last fetched (ms)
 };
 
 function colorFor(name) {
@@ -118,9 +122,16 @@ async function api(path, options = {}) {
   const response = await fetch(path, options);
   let body = null;
   try { body = await response.json(); } catch { /* not JSON */ }
-  if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    if (response.status === 401) setAdmin({ ...S.admin, signed_in: false });
+    throw new Error(body?.error || `HTTP ${response.status}`);
+  }
   return body;
 }
+
+const postJSON = (data) => ({
+  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+});
 
 /* ----------------------------------------------------------------- polling */
 
@@ -148,8 +159,10 @@ function ingest(d) {
   const first = S.first;
   S.data = d;
   S.cfg = d.config;
+  setAdmin(d.admin);
   if (first) {
     buildNodes(d.config.node_ports);
+    buildAdminNodes(d.config.node_ports);
     fillConfig(d.config);
   }
 
@@ -199,6 +212,7 @@ function renderAll() {
   renderWireStates();
   renderFiles();
   renderMap();
+  renderAdmin();
   $('#footer-status').textContent = `${d.managed ? 'cluster started by the dashboard' : 'attached to a running cluster'} · updated ${clock(d.time)}`;
 }
 
@@ -324,6 +338,34 @@ function nodeStatus(n) {
   return { key: 'offline', label: 'Offline', tone: 'muted' };
 }
 
+/* What a node physically holds, or (when it is down) what the master says it held. */
+function nodeItems(n) {
+  if (n.reachable && n.held) {
+    return n.held.map((id) => {
+      const owner = S.owners.get(id);
+      return { id, stale: !owner || !owner.nodes.includes(n.port), ghost: false };
+    });
+  }
+  return [...S.owners.values()].filter((c) => c.nodes.includes(n.port)).map((c) => ({ id: c.id, stale: false, ghost: true }));
+}
+
+function paintNodeButton(btn, n) {
+  const busy = nodeCard(n.port)?.dataset.busy === '1';
+  const admin = S.admin.signed_in;
+  if (n.reachable) {
+    btn.className = 'btn btn-sm btn-outline-bad';
+    btn.replaceChildren(busy ? spinner() : icon(admin ? 'zap' : 'lock'), 'Crash node');
+    btn.disabled = busy || !n.managed;
+    btn.title = !n.managed ? 'This node was started outside the dashboard; stop it in its own terminal'
+      : admin ? 'Kill this node without warning (SIGKILL)' : 'Admin only: sign in to crash this node';
+  } else {
+    btn.className = 'btn btn-sm btn-outline-ok';
+    btn.replaceChildren(busy ? spinner() : icon(admin ? 'play' : 'lock'), 'Restart node');
+    btn.disabled = busy;
+    btn.title = admin ? 'Start this storage node again' : 'Admin only: sign in to restart this node';
+  }
+}
+
 function renderNodes() {
   for (const n of S.data.nodes) {
     const card = nodeCard(n.port);
@@ -334,34 +376,13 @@ function renderNodes() {
     pill.className = `pill tone-${st.tone}`;
     pill.lastChild.textContent = st.label;
 
-    // what the node physically holds, or (when it is down) what the master says it held
-    let items;
-    if (n.reachable && n.held) {
-      items = n.held.map((id) => {
-        const owner = S.owners.get(id);
-        return { id, stale: !owner || !owner.nodes.includes(n.port), ghost: false };
-      });
-    } else {
-      items = [...S.owners.values()].filter((c) => c.nodes.includes(n.port)).map((c) => ({ id: c.id, stale: false, ghost: true }));
-    }
+    const items = nodeItems(n);
     diffBlocks(card.querySelector('[data-role="blocks"]'), items, n);
     const stale = items.filter((i) => i.stale).length;
     card.querySelector('[data-role="count"]').textContent = stale ? `${items.length - stale} + ${stale} stale` : String(items.length);
     card.querySelector('[data-role="disk"]').textContent = n.reachable ? fmtSize(n.bytes) : '—';
 
-    const btn = card.querySelector('[data-role="action"]');
-    const busy = card.dataset.busy === '1';
-    if (n.reachable) {
-      btn.className = 'btn btn-sm btn-outline-bad';
-      btn.replaceChildren(busy ? spinner() : icon('zap'), 'Crash node');
-      btn.disabled = busy || !n.managed;
-      btn.title = n.managed ? 'Kill this node without warning (SIGKILL)' : 'This node was started outside the dashboard; stop it in its own terminal';
-    } else {
-      btn.className = 'btn btn-sm btn-outline-ok';
-      btn.replaceChildren(busy ? spinner() : icon('play'), 'Restart node');
-      btn.disabled = busy;
-      btn.title = 'Start this storage node again';
-    }
+    paintNodeButton(card.querySelector('[data-role="action"]'), n);
   }
 }
 
@@ -600,7 +621,7 @@ function statusPill(status) {
 
 function renderFiles() {
   const files = S.data.files;
-  const sig = JSON.stringify([S.selected, files.map((f) => [f.name, f.status, f.size, f.uploaded])]);
+  const sig = JSON.stringify([S.selected, S.admin.signed_in, files.map((f) => [f.name, f.status, f.size, f.uploaded])]);
   if (sig === S.sigs.files) return;
   S.sigs.files = sig;
   const list = $('#file-list');
@@ -620,7 +641,7 @@ function renderFiles() {
   statusPill(f.status),
   h('div', { class: 'row-actions' },
     h('button', { class: 'icon-btn sm', type: 'button', title: 'Download and verify', 'aria-label': `Download ${f.name}`, onclick: (e) => { e.stopPropagation(); downloadFile(f.name).catch(showError); } }, icon('download')),
-    h('button', { class: 'icon-btn sm', type: 'button', title: 'Delete', 'aria-label': `Delete ${f.name}`, onclick: (e) => { e.stopPropagation(); deleteFile(f.name); } }, icon('trash'))))));
+    S.admin.signed_in ? h('button', { class: 'icon-btn sm', type: 'button', title: 'Delete', 'aria-label': `Delete ${f.name}`, onclick: (e) => { e.stopPropagation(); deleteFile(f.name); } }, icon('trash')) : null))));
 }
 
 function selectFile(name) {
@@ -845,6 +866,7 @@ async function setNodeBusy(port, busy) {
 }
 
 async function crashNode(port) {
+  await requireAdmin();
   await setNodeBusy(port, true);
   try {
     await api(`/api/nodes/${port}/crash`, { method: 'POST' });
@@ -857,6 +879,7 @@ async function crashNode(port) {
 }
 
 async function startNode(port) {
+  await requireAdmin();
   await setNodeBusy(port, true);
   try {
     await api(`/api/nodes/${port}/start`, { method: 'POST' });
@@ -919,7 +942,7 @@ const STEPS = [
     done: () => demo.flags.uploaded && !!fileByName(demo.file),
   },
   {
-    title: 'Crash a node', short: 'kill -9, no warning', icon: 'zap',
+    title: 'Crash a node', short: 'kill -9, no warning', icon: 'zap', admin: true,
     text: () => `Storage node <b>${demo.victim}</b> is killed without warning (SIGKILL), like a power cut. It stops answering and stops sending heartbeats. Nobody tells the master.`,
     watch: () => `Node ${demo.victim} turns amber and its “silent for” timer starts counting toward the ${S.cfg?.dead_after ?? 10} s limit.`,
     action: () => `Crash node ${demo.victim}`,
@@ -961,7 +984,7 @@ const STEPS = [
     },
   },
   {
-    title: 'Bring it back', short: 'rejoin + cleanup', icon: 'play',
+    title: 'Bring it back', short: 'rejoin + cleanup', icon: 'play', admin: true,
     text: () => `Restart node ${demo.victim}. It rejoins with its old chunk files, but those chunks already have 2 copies elsewhere. The master spots the <b>stale</b> copies and deletes them.`,
     watch: () => 'The node turns green; its dashed (stale) squares disappear.',
     action: () => `Restart node ${demo.victim}`,
@@ -1017,6 +1040,7 @@ function checkDemo() {
 
 async function autoPlay() {
   if (demo.auto) { demo.auto = false; renderDemo(true); return; }
+  try { await requireAdmin(); } catch (err) { showError(err); return; }   // the demo crashes a node
   if (demo.step >= STEPS.length) resetDemo();
   demo.auto = true;
   renderDemo(true);
@@ -1035,7 +1059,7 @@ async function autoPlay() {
 }
 
 function renderDemo(force) {
-  const sig = JSON.stringify([demo.step, demo.busy, demo.auto, demo.results, demo.victim, !!S.data]);
+  const sig = JSON.stringify([demo.step, demo.busy, demo.auto, demo.results, demo.victim, !!S.data, S.admin.signed_in]);
   if (!force && sig === S.sigs.demo) return;
   S.sigs.demo = sig;
 
@@ -1060,13 +1084,14 @@ function renderDemo(force) {
   const s = STEPS[demo.step];
   const label = s.action ? s.action() : null;
   const doneNow = !!demo.results[demo.step];
+  const locked = s.admin && !S.admin.signed_in;
   let side;
   if (label) {
     side = h('button', {
       class: 'btn btn-primary btn-lg', type: 'button',
       disabled: demo.busy || demo.auto || doneNow || !S.data,
       onclick: () => runStep(demo.step),
-    }, demo.busy ? spinner() : icon(s.icon), demo.busy ? 'Working…' : label);
+    }, demo.busy ? spinner() : icon(locked ? 'lock' : s.icon), demo.busy ? 'Working…' : label);
   } else {
     side = h('div', { class: 'waiting' },
       h('div', { class: 'timer-row' }, h('span', { id: 'heal-timer' }, 'Waiting for the master…'), spinner()),
@@ -1080,7 +1105,241 @@ function renderDemo(force) {
       h('p', { class: 'watch' }, icon('info'), h('span', {}, h('b', {}, 'Watch: '), s.watch()))),
     h('div', { class: 'step-side' },
       side,
+      locked && !doneNow ? h('p', { class: 'muted small' }, 'This step needs the admin sign-in.') : null,
       doneNow ? h('p', { class: 'step-result' }, icon('check'), demo.results[demo.step]) : null));
+}
+
+/* ----------------------------------------------------------------- admin */
+
+function setAdmin(next) {
+  const changed = next.signed_in !== S.admin.signed_in || next.configured !== S.admin.configured;
+  S.admin = next;
+  if (changed || S.first) renderAccess();
+}
+
+/* Show what the viewer may do: the sign-in button, and the locked or the open Admin tab. */
+function renderAccess() {
+  const { configured, signed_in: signedIn } = S.admin;
+  $('#admin-toggle').replaceChildren(icon(signedIn ? 'logout' : 'lock'), signedIn ? 'Sign out' : 'Admin sign-in');
+  $('#admin-toggle').title = signedIn ? 'Signed in as admin. Click to sign out.' : 'Sign in as admin';
+  $('#admin-locked').hidden = signedIn;
+  $('#admin-panel').hidden = !signedIn;
+  $('#locked-title').textContent = configured ? 'Admin sign-in' : 'Create the admin password';
+  $('#locked-text').textContent = configured
+    ? 'Viewers can watch, upload and download. Anything that can lose data needs the admin password.'
+    : 'No admin password has been set yet. Whoever sets it first becomes the admin of this dashboard.';
+  $('#locked-action').textContent = configured ? 'Sign in' : 'Create password';
+}
+
+function adminDialog() {
+  const first = !S.admin.configured;
+  const dialog = $('#admin-dialog');
+  $('#admin-title').textContent = first ? 'Create the admin password' : 'Sign in as admin';
+  $('#admin-text').textContent = first
+    ? 'Use at least 8 characters, with letters and numbers. It is stored only as a hash.'
+    : 'Crashing nodes, deleting files and resetting the cluster need the admin password.';
+  $('#admin-submit').textContent = first ? 'Create and sign in' : 'Sign in';
+  $('#admin-repeat-row').hidden = !first;
+  $('#admin-repeat').required = first;
+  $('#admin-password').autocomplete = first ? 'new-password' : 'current-password';
+  $('#admin-form').reset();
+  $('#admin-error').hidden = true;
+  dialog.returnValue = '';
+  dialog.showModal();
+  return new Promise((resolve) => dialog.addEventListener('close', () => resolve(dialog.returnValue === 'ok'), { once: true }));
+}
+
+function formError(id, message) {
+  const el = $(id);
+  el.textContent = message;
+  el.hidden = false;
+}
+
+async function submitAdminDialog(event) {
+  event.preventDefault();
+  const first = !S.admin.configured;
+  const password = $('#admin-password').value;
+  if (first && password !== $('#admin-repeat').value) { formError('#admin-error', 'The two passwords do not match.'); return; }
+  try {
+    setAdmin(await api(`/api/admin/${first ? 'setup' : 'login'}`, postJSON({ password })));
+    $('#admin-dialog').close('ok');
+    toast('Signed in as admin', 'ok');
+    pollNow();
+  } catch (err) { formError('#admin-error', err.message); }
+}
+
+/* Call before any admin action: asks for the password if needed, throws if refused. */
+async function requireAdmin() {
+  if (!S.admin.signed_in && !(await adminDialog())) throw new Error('Sign in as admin to do this');
+}
+
+async function signOut() {
+  try {
+    setAdmin(await api('/api/admin/logout', { method: 'POST' }));
+    toast('Signed out', 'info');
+    pollNow();
+  } catch (err) { showError(err); }
+}
+
+function buildAdminNodes(ports) {
+  const cells = () => ['status', 'seen', 'chunks', 'disk'].map((role) => h('td', { 'data-role': role, class: 'nowrap' }));
+  $('#admin-nodes').replaceChildren(
+    h('thead', {}, h('tr', {}, ['Process', 'Status', 'Last heartbeat', 'Chunks on disk', 'Disk used', ''].map((c) => h('th', { scope: 'col' }, c)))),
+    h('tbody', {},
+      h('tr', { id: 'admin-master' }, h('td', { class: 'nowrap' }, h('b', {}, 'Master')), cells(), h('td', {})),
+      ports.map((port) => h('tr', { id: `admin-node-${port}` },
+        h('td', { class: 'nowrap' }, h('b', {}, `Storage node ${port}`)), cells(),
+        h('td', {}, h('div', { class: 'cell-actions' },
+          h('button', { class: 'btn btn-sm', type: 'button', 'data-role': 'action', onclick: () => nodeAction(port) }, '…')))))));
+  $('#inspect-node').replaceChildren(...ports.map((port) => h('option', { value: port }, `Node ${port}`)));
+}
+
+function setCell(row, role, value) {
+  const cell = row.querySelector(`[data-role="${role}"]`);
+  const shown = value instanceof Node ? value.outerHTML : value;
+  if (cell.dataset.shown === shown) return;       // leave it alone: pills keep blinking smoothly
+  cell.dataset.shown = shown;
+  if (value instanceof Node) cell.replaceChildren(value); else cell.textContent = value;
+}
+
+function renderAdminNodes() {
+  const master = $('#admin-master');
+  setCell(master, 'status', h('span', { class: `pill tone-${S.data.master.up ? 'ok' : 'bad'}` }, h('span', { class: 'dot' }), S.data.master.up ? 'Online' : 'Offline'));
+  setCell(master, 'seen', '—');
+  setCell(master, 'chunks', 'none, metadata only');
+  setCell(master, 'disk', '—');
+  for (const n of S.data.nodes) {
+    const row = document.getElementById(`admin-node-${n.port}`);
+    const st = nodeStatus(n);
+    const seen = S.lastSeen[n.port];
+    setCell(row, 'status', h('span', { class: `pill tone-${st.tone}` }, h('span', { class: 'dot' }), st.label));
+    setCell(row, 'seen', seen == null ? '—' : `${Math.max(0, now() - seen).toFixed(0)} s ago`);
+    setCell(row, 'chunks', n.reachable ? String(n.held?.length ?? 0) : '—');
+    setCell(row, 'disk', n.reachable ? fmtSize(n.bytes) : '—');
+    paintNodeButton(row.querySelector('[data-role="action"]'), n);
+  }
+}
+
+function renderAdminFiles() {
+  const files = S.data.files;
+  const sig = JSON.stringify(files.map((f) => [f.name, f.status, f.size, f.uploaded]));
+  if (sig === S.sigs.adminFiles) return;
+  S.sigs.adminFiles = sig;
+  $('#admin-files-empty').hidden = files.length > 0;
+  $('#admin-files').parentElement.hidden = !files.length;
+  $('#admin-files').replaceChildren(
+    h('thead', {}, h('tr', {}, ['File', 'Size', 'Chunks', 'Health', ''].map((c) => h('th', { scope: 'col' }, c)))),
+    h('tbody', {}, files.map((f) => h('tr', {},
+      h('td', { class: 'cell-name', title: `Uploaded ${f.uploaded}` }, f.name),
+      h('td', { class: 'nowrap' }, fmtSize(f.size)),
+      h('td', {}, f.chunks.length),
+      h('td', {}, statusPill(f.status)),
+      h('td', {}, h('div', { class: 'cell-actions' },
+        h('button', { class: 'icon-btn sm', type: 'button', title: 'Download and verify', 'aria-label': `Download ${f.name}`, onclick: () => downloadFile(f.name).catch(showError) }, icon('download')),
+        h('button', { class: 'icon-btn sm', type: 'button', title: 'Delete', 'aria-label': `Delete ${f.name}`, onclick: () => deleteFile(f.name) }, icon('trash'))))))));
+}
+
+function renderInspector() {
+  const n = nodeBy(Number($('#inspect-node').value));
+  if (!n) return;
+  const items = nodeItems(n);
+  const sig = JSON.stringify([n.port, n.reachable, items.map((i) => [i.id, i.stale, i.ghost, S.owners.get(i.id)?.nodes])]);
+  if (sig === S.sigs.inspector) return;
+  S.sigs.inspector = sig;
+  const stale = items.filter((i) => i.stale).length;
+  $('#inspect-summary').textContent = n.reachable
+    ? `${plural(items.length, 'chunk')} on disk${stale ? `, ${stale} stale` : ''}`
+    : `Node ${n.port} is down. These are the copies the master lists for it.`;
+  $('#inspect-empty').hidden = items.length > 0;
+  $('#inspect-empty').textContent = n.reachable ? 'No chunks stored on this node.' : 'The master lists no chunks for this node.';
+  $('#inspect-table').parentElement.hidden = !items.length;
+  const state = (i) => (i.ghost ? ['Unreachable', 'bad'] : i.stale ? ['Stale', 'warn'] : ['Stored', 'ok']);
+  $('#inspect-table').replaceChildren(
+    h('thead', {}, h('tr', {}, ['Chunk', 'Size', 'Copies on', 'State'].map((c) => h('th', { scope: 'col' }, c)))),
+    h('tbody', {}, items.map((i) => {
+      const owner = S.owners.get(i.id);
+      const [label, tone] = state(i);
+      return h('tr', {},
+        h('td', { class: 'cell-name' }, i.id),
+        h('td', { class: 'nowrap' }, owner ? fmtSize(owner.size) : '—'),
+        h('td', { class: 'nowrap' }, owner ? owner.nodes.join(', ') : 'not in the map'),
+        h('td', {}, h('span', { class: `pill tone-${tone}` }, label)));
+    })));
+}
+
+async function loadActivity() {
+  S.activityAt = Date.now();
+  if (!S.admin.signed_in) return;
+  try { renderActivity((await api('/api/admin/activity')).activity); } catch { /* the next poll tries again */ }
+}
+
+function renderActivity(list) {
+  const sig = JSON.stringify(list);
+  if (sig === S.sigs.activity) return;
+  S.sigs.activity = sig;
+  $('#admin-activity-empty').hidden = list.length > 0;
+  $('#admin-activity').parentElement.hidden = !list.length;
+  const when = (t) => new Date(t * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+  $('#admin-activity').replaceChildren(
+    h('thead', {}, h('tr', {}, ['Time', 'Who', 'Action', 'Detail'].map((c) => h('th', { scope: 'col' }, c)))),
+    h('tbody', {}, list.map((e) => h('tr', {},
+      h('td', { class: 'nowrap mono small' }, when(e.time)),
+      h('td', {}, h('span', { class: `pill tone-${e.who === 'admin' ? 'accent' : 'muted'}` }, e.who)),
+      h('td', {}, e.action),
+      h('td', { class: 'cell-name' }, e.detail)))));
+}
+
+function renderAdmin() {
+  if (!S.admin.signed_in || $('#view-admin').hidden || !S.data) return;
+  renderAdminNodes();
+  renderAdminFiles();
+  renderInspector();
+  if (Date.now() - S.activityAt > 3000) loadActivity();
+}
+
+async function runIntegrityCheck() {
+  const btn = $('#verify-run');
+  const label = btn.lastChild;
+  btn.disabled = true;
+  label.textContent = 'Checking…';
+  try {
+    renderIntegrity(await api('/api/admin/verify', { method: 'POST' }));
+    loadActivity();
+  } catch (err) { showError(err); } finally {
+    btn.disabled = false;
+    label.textContent = 'Check every copy';
+  }
+}
+
+function renderIntegrity(r) {
+  const box = $('#verify-result');
+  if (!r.files.length) { box.replaceChildren(h('p', { class: 'empty' }, 'No files stored yet.')); return; }
+  const all = r.readable === r.files.length;
+  const whole = all && r.good_copies === r.expected_copies;
+  const tones = { ok: 'ok', 'at risk': 'warn', unreadable: 'bad' };
+  box.replaceChildren(h('div', { class: `op-result ${whole ? 'tone-ok' : ''}` },
+    h('div', { class: 'op-head', style: `--tone:var(--${whole ? 'ok' : all ? 'warn' : 'bad'})` }, icon(all ? 'shield' : 'alert'),
+      `${r.readable} of ${plural(r.files.length, 'file')} readable`),
+    h('div', { class: 'op-sub' }, `${r.good_copies} of ${r.expected_copies} chunk copies good · checked in ${r.seconds.toFixed(2)} s at ${clock(now())}`),
+    r.files.map((f) => h('div', { class: 'verify-file' },
+      h('div', { class: 'op-row' }, h('span', { class: 'chunk-id' }, f.name),
+        h('span', { class: 'chip' }, `${f.good_copies}/${f.expected_copies}`),
+        h('span', { class: `pill tone-${tones[f.status]}` }, f.status)),
+      f.problems.map((p) => h('div', { class: 'op-row' }, h('span', { class: 'chunk-id' }, p.chunk),
+        h('span', { class: 'via' }, p.problem), h('span', { class: 'chip' }, `node ${p.node}`)))))));
+}
+
+async function changePassword(event) {
+  event.preventDefault();
+  const form = event.target;
+  $('#pw-error').hidden = true;
+  if ($('#pw-new').value !== $('#pw-repeat').value) { formError('#pw-error', 'The two new passwords do not match.'); return; }
+  try {
+    await api('/api/admin/password', postJSON({ current: $('#pw-current').value, new: $('#pw-new').value }));
+    form.reset();
+    toast('Password changed; other browsers are signed out', 'ok');
+    loadActivity();
+  } catch (err) { formError('#pw-error', err.message); }
 }
 
 /* ------------------------------------------------------------- results */
@@ -1181,7 +1440,7 @@ function toggleTheme() {
 }
 
 function showView(name) {
-  if (!['live', 'results', 'how'].includes(name)) name = 'live';
+  if (!['live', 'results', 'how', 'admin'].includes(name)) name = 'live';
   for (const tab of $$('.tab')) {
     const on = tab.dataset.view === name;
     tab.classList.toggle('active', on);
@@ -1190,6 +1449,7 @@ function showView(name) {
   for (const view of $$('.view')) view.hidden = view.dataset.view !== name;
   if (name === 'live') requestAnimationFrame(layoutWires);
   if (name === 'results') loadResults();
+  if (name === 'admin') { renderAdmin(); loadActivity(); }
   if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
 }
 
@@ -1218,6 +1478,13 @@ function init() {
   $('#up-sample').addEventListener('click', () => uploadSample().catch(showError));
   $('#up-random').addEventListener('click', () => uploadRandom().catch(showError));
   $('#reset-cluster').addEventListener('click', resetCluster);
+  $('#admin-toggle').addEventListener('click', () => (S.admin.signed_in ? signOut() : adminDialog()));
+  $('#locked-signin').addEventListener('click', adminDialog);
+  $('#admin-form').addEventListener('submit', submitAdminDialog);
+  $('#admin-cancel').addEventListener('click', () => $('#admin-dialog').close('cancel'));
+  $('#verify-run').addEventListener('click', runIntegrityCheck);
+  $('#password-form').addEventListener('submit', changePassword);
+  $('#inspect-node').addEventListener('change', renderInspector);
   $('#map-file').addEventListener('change', (e) => selectFile(e.target.value));
   $('#events-clear').addEventListener('click', () => { $('#events').replaceChildren(); $('#events-empty').hidden = false; });
   setupDropzone();
@@ -1237,6 +1504,7 @@ function init() {
   new ResizeObserver(() => layoutWires()).observe($('#topology'));
   window.addEventListener('resize', layoutWires);
 
+  renderAccess();
   renderDemo(true);
   requestAnimationFrame(tick);
   poll();

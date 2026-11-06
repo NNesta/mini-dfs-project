@@ -30,9 +30,11 @@
         <button class="tab active" role="tab" data-view="live" aria-selected="true">Live cluster</button>
         <button class="tab" role="tab" data-view="results" aria-selected="false">Test results</button>
         <button class="tab" role="tab" data-view="how" aria-selected="false">How it works</button>
+        <button class="tab" role="tab" data-view="admin" aria-selected="false">Admin</button>
       </div>
       <div class="top-actions">
         <span class="pill pill-lg tone-muted" id="health-pill"><span class="dot"></span><span>Connecting…</span></span>
+        <button class="btn btn-sm" id="admin-toggle" type="button"></button>
         <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch colour theme" title="Switch colour theme"></button>
       </div>
     </div>
@@ -130,7 +132,7 @@
           <div class="card-head">
             <div>
               <h2><span class="icon" data-icon="file"></span>Files</h2>
-              <p class="muted">Upload, download and delete. Click a file to see its chunk map.</p>
+              <p class="muted">Upload and download. Click a file to see its chunk map.</p>
             </div>
           </div>
           <label class="dropzone" id="dropzone">
@@ -153,9 +155,6 @@
           </div>
           <ul class="file-list" id="file-list"></ul>
           <div class="op-result" id="op-result" hidden></div>
-          <div class="danger-zone">
-            <button class="btn btn-sm btn-ghost tone-bad-text" id="reset-cluster" type="button"><span class="icon" data-icon="refresh"></span>Reset cluster (delete all data)</button>
-          </div>
         </section>
 
         <section class="card map-card" id="map-card">
@@ -362,8 +361,122 @@ uv run run_tests.py</pre>
             <li><b>One machine.</b> All nodes run on one laptop, so real network delays are not tested.</li>
             <li><b>Write once.</b> Files cannot be edited after upload, only replaced (as in HDFS).</li>
             <li><b>Fixed cluster.</b> Three storage nodes on fixed ports; adding nodes means editing <code>config.py</code>.</li>
+            <li><b>Dashboard-only admin.</b> The admin sign-in guards this dashboard. The master and node APIs stay open, so <code>client.py</code> needs no password and anyone on this laptop can still call them.</li>
           </ul>
         </section>
+      </div>
+    </section>
+
+    <!-- =============================================================== ADMIN -->
+    <section class="view" data-view="admin" id="view-admin" hidden>
+      <div class="page-head">
+        <div>
+          <h1>Admin</h1>
+          <p class="muted">Manage the storage nodes, the files and the cluster's data.</p>
+        </div>
+        <p class="hint">The sign-in guards this dashboard only. <code>client.py</code> and the master API stay open, so the core system runs without it.</p>
+      </div>
+
+      <section class="card admin-locked" id="admin-locked">
+        <span class="role-icon"><span class="icon" data-icon="lock"></span></span>
+        <h2 id="locked-title">Admin sign-in</h2>
+        <p class="muted" id="locked-text"></p>
+        <table class="table access">
+          <thead><tr><th scope="col">Action</th><th scope="col">Anyone</th><th scope="col">Admin</th></tr></thead>
+          <tbody>
+            <tr><td>Watch the cluster, read test results</td><td>Yes</td><td>Yes</td></tr>
+            <tr><td>Upload a new file, download any file</td><td>Yes</td><td>Yes</td></tr>
+            <tr><td>Replace or delete a file</td><td>No</td><td>Yes</td></tr>
+            <tr><td>Crash or restart a storage node</td><td>No</td><td>Yes</td></tr>
+            <tr><td>Inspect chunks, check integrity, read the activity log</td><td>No</td><td>Yes</td></tr>
+            <tr><td>Reset the cluster</td><td>No</td><td>Yes</td></tr>
+          </tbody>
+        </table>
+        <button class="btn btn-primary" id="locked-signin" type="button"><span class="icon" data-icon="lock"></span><span id="locked-action">Sign in</span></button>
+      </section>
+
+      <div class="admin-panel" id="admin-panel" hidden>
+        <section class="card">
+          <div class="card-head">
+            <div>
+              <h2><span class="icon" data-icon="server"></span>Cluster control</h2>
+              <p class="muted">Every process in the cluster. Crashing a node kills its process without warning, so the master has to find out through missed heartbeats.</p>
+            </div>
+          </div>
+          <div class="table-wrap"><table class="table" id="admin-nodes"></table></div>
+        </section>
+
+        <div class="two-col">
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2><span class="icon" data-icon="file"></span>Files</h2>
+                <p class="muted">Every stored file. Deleting removes all of its chunk copies from every node.</p>
+              </div>
+            </div>
+            <div class="table-wrap"><table class="table" id="admin-files"></table></div>
+            <p class="empty" id="admin-files-empty" hidden>No files stored yet.</p>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2><span class="icon" data-icon="shield"></span>Integrity check</h2>
+                <p class="muted">Reads every copy of every chunk and compares it with the SHA-256 the master recorded. A normal download stops at the first good copy, so only this finds a damaged second copy.</p>
+              </div>
+              <div class="head-actions">
+                <button class="btn btn-primary btn-sm" id="verify-run" type="button"><span class="icon" data-icon="shield"></span><span>Check every copy</span></button>
+              </div>
+            </div>
+            <div id="verify-result"><p class="empty">Not run yet.</p></div>
+          </section>
+        </div>
+
+        <div class="two-col">
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2><span class="icon" data-icon="grid"></span>Chunks on a node</h2>
+                <p class="muted">Read-only on purpose: the master tracks live nodes, not individual copies, so deleting a copy by hand would leave a chunk short without anyone noticing.</p>
+              </div>
+              <select id="inspect-node" class="select" aria-label="Storage node to inspect"></select>
+            </div>
+            <p class="op-sub" id="inspect-summary"></p>
+            <div class="table-wrap"><table class="table" id="inspect-table"></table></div>
+            <p class="empty" id="inspect-empty" hidden></p>
+          </section>
+
+          <section class="card">
+            <div class="card-head">
+              <div>
+                <h2><span class="icon" data-icon="activity"></span>Activity log</h2>
+                <p class="muted">Who did what on this dashboard, newest first. It survives a restart and a cluster reset.</p>
+              </div>
+            </div>
+            <div class="table-wrap"><table class="table" id="admin-activity"></table></div>
+            <p class="empty" id="admin-activity-empty" hidden>Nothing logged yet.</p>
+          </section>
+        </div>
+
+        <div class="two-col">
+          <section class="card">
+            <h2><span class="icon" data-icon="lock"></span>Admin password</h2>
+            <p class="muted">Changing it signs out every other browser.</p>
+            <form id="password-form">
+              <label class="field"><span>Current password</span><input type="password" id="pw-current" autocomplete="current-password" required></label>
+              <label class="field"><span>New password</span><input type="password" id="pw-new" autocomplete="new-password" minlength="8" required></label>
+              <label class="field"><span>Repeat the new password</span><input type="password" id="pw-repeat" autocomplete="new-password" minlength="8" required></label>
+              <p class="form-error" id="pw-error" hidden></p>
+              <div class="form-actions"><button class="btn" type="submit">Change password</button></div>
+            </form>
+          </section>
+
+          <section class="card">
+            <h2><span class="icon" data-icon="alert"></span>Reset the cluster</h2>
+            <p class="muted">Stops the master and all storage nodes, deletes every stored chunk and the metadata, then starts a fresh, empty cluster. The activity log and the admin password are kept.</p>
+            <div class="form-actions"><button class="btn btn-outline-bad" id="reset-cluster" type="button"><span class="icon" data-icon="refresh"></span>Reset cluster (delete all data)</button></div>
+          </section>
+        </div>
       </div>
     </section>
   </main>
@@ -382,6 +495,20 @@ uv run run_tests.py</pre>
       <div class="dialog-actions">
         <button class="btn btn-ghost" value="cancel">Cancel</button>
         <button class="btn btn-danger" value="ok" id="confirm-ok">Confirm</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog" id="admin-dialog">
+    <form id="admin-form">
+      <h3 id="admin-title">Sign in as admin</h3>
+      <p id="admin-text"></p>
+      <label class="field"><span>Password</span><input type="password" id="admin-password" required></label>
+      <label class="field" id="admin-repeat-row"><span>Repeat the password</span><input type="password" id="admin-repeat" autocomplete="new-password"></label>
+      <p class="form-error" id="admin-error" hidden></p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" id="admin-cancel" type="button">Cancel</button>
+        <button class="btn btn-primary" id="admin-submit" type="submit">Sign in</button>
       </div>
     </form>
   </dialog>

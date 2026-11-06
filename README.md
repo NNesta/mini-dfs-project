@@ -33,8 +33,9 @@ uv run dashboard.py --fresh                   # master + 3 storage nodes + web d
 Open **<http://127.0.0.1:8080>**. The dashboard shows the cluster live and has a
 guided demo: upload a file, crash a node, read the file anyway, watch the master
 detect the failure and re-create the lost copies, then bring the node back. It
-also has the test results and a "How it works" page. The master's own JSON API is
-at <http://127.0.0.1:5000/>.
+also has the test results and a "How it works" page. Crashing a node needs the
+admin password, which you choose the first time you click **Admin sign-in**. The
+master's own JSON API is at <http://127.0.0.1:5000/>.
 
 Prefer the terminal? Run `uv run cluster.py --fresh` instead, then in a second
 terminal, from the `code` folder:

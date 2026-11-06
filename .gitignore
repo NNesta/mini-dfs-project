@@ -14,8 +14,17 @@ downloads/
 test_run/
 *.part
 
+# Admin password hash, session secret and activity log (dashboard only)
+admin.json
+admin.json.tmp
+admin_activity.jsonl
+
 # OS and editor files
 .DS_Store
 .idea/
 .vscode/
 ~$*
+
+# Claude Code project files (kept on this machine, not shared through git)
+CLAUDE.md
+.claude/
